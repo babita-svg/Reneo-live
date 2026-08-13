@@ -2,5 +2,5 @@
   "name": "Reneo Live",
   "description": "Live commerce platform for solo entrepreneurs in Africa - stream products, host live sessions, chat, and shop in real time.",
   "requestFramePermissions": ["camera", "microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  
 }
