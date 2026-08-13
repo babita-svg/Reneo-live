@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { X, Package, Upload } from 'lucide-react';
 import { useLive } from '../context/LiveContext';
+import { useAuth } from '../context/AuthContext';
 
 export const CreateProductModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { createProduct } = useLive();
+  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
@@ -25,7 +27,7 @@ export const CreateProductModal: React.FC<{ onClose: () => void }> = ({ onClose 
     setLoading(true);
     try {
       await createProduct({
-        seller_id: 'demo-seller-101',
+        seller_id: user?.id || 'demo-seller-101',
         title,
         description,
         price: parseFloat(price) || 0,

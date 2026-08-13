@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from 'agora-rtc-sdk-ng';
 import { createAgoraClient, createLocalTracks, fetchAgoraToken } from '../lib/agora';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useLive } from '../context/LiveContext';
 import { Product } from '../types';
@@ -30,6 +31,7 @@ export const LiveStreamSeller: React.FC<{ onClose: () => void }> = ({ onClose })
     chatMessages,
     sendChatMessage,
     floatingEmojis,
+    setError,
   } = useLive();
 
   const [micEnabled, setMicEnabled] = useState(true);
@@ -37,6 +39,7 @@ export const LiveStreamSeller: React.FC<{ onClose: () => void }> = ({ onClose })
   const [messageInput, setMessageInput] = useState('');
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [viewerCount, setViewerCount] = useState(142);
+  const [hardwareError, setHardwareError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLDivElement>(null);
   const agoraClientRef = useRef<IAgoraRTCClient | null>(null);
@@ -50,37 +53,64 @@ export const LiveStreamSeller: React.FC<{ onClose: () => void }> = ({ onClose })
 
     async function initBroadcaster() {
       try {
+        setHardwareError(null);
         const client = createAgoraClient();
         agoraClientRef.current = client;
 
         const channelName = activeSession?.channel_name || 'reneo-live-kente-showcase';
         const uid = Math.floor(Math.random() * 10000);
 
-        // Fetch token from server
-        const tokenData = await fetchAgoraToken(channelName, uid, 'host');
+        // Get auth token from Supabase if configured
+        let sessionAuthToken: string | undefined = undefined;
+        try {
+          const { data } = await supabase.auth.getSession();
+          sessionAuthToken = data?.session?.access_token;
+        } catch {
+          // ignore if no session
+        }
 
-        if (tokenData.token && tokenData.appId && !tokenData.isMock) {
-          await client.join(tokenData.appId, channelName, tokenData.token, uid);
+        // Fetch token from server with authentication & session ID
+        let tokenData;
+        try {
+          tokenData = await fetchAgoraToken(channelName, uid, activeSession?.id, sessionAuthToken);
+          if (tokenData.token && tokenData.appId) {
+            await client.join(tokenData.appId, channelName, tokenData.token, uid);
+          }
+        } catch (tokenErr: any) {
+          console.warn('Agora token request notice:', tokenErr);
+          if (mounted) {
+            setError(tokenErr.message || 'Agora token server error.');
+          }
         }
 
         // Create mic & camera tracks
-        const { audioTrack, videoTrack } = await createLocalTracks();
-        localTracksRef.current = { audio: audioTrack, video: videoTrack };
+        try {
+          const { audioTrack, videoTrack } = await createLocalTracks();
+          localTracksRef.current = { audio: audioTrack, video: videoTrack };
 
-        if (videoRef.current && videoTrack) {
-          videoTrack.play(videoRef.current);
+          if (videoRef.current && videoTrack) {
+            videoTrack.play(videoRef.current);
+          }
+
+          if (tokenData?.token) {
+            await client.publish([audioTrack, videoTrack]);
+          }
+
+          if (mounted) {
+            setIsLiveConnected(true);
+          }
+        } catch (mediaErr: any) {
+          console.error('Hardware track error:', mediaErr);
+          if (mounted) {
+            setHardwareError(mediaErr.message || 'Camera or microphone access denied.');
+            setError(mediaErr.message || 'Camera or microphone access denied.');
+            setIsLiveConnected(true);
+          }
         }
-
-        if (tokenData.token && !tokenData.isMock) {
-          await client.publish([audioTrack, videoTrack]);
-        }
-
+      } catch (err: any) {
+        console.error('Broadcaster initialization error:', err);
         if (mounted) {
-          setIsLiveConnected(true);
-        }
-      } catch (err) {
-        console.warn('Live stream hardware preview fallback mode:', err);
-        if (mounted) {
+          setError(err.message || 'Failed to start live stream broadcast.');
           setIsLiveConnected(true);
         }
       }

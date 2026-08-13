@@ -31,9 +31,26 @@ CREATE POLICY "Users can insert their own profile"
     ON public.profiles FOR INSERT 
     WITH CHECK (auth.uid() = id);
 
-CREATE POLICY "Users can update their own profile" 
+CREATE POLICY "Users can update their own profile fields except role" 
     ON public.profiles FOR UPDATE 
-    USING (auth.uid() = id);
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
+
+-- Trigger to prevent client-side role modification/elevation (Requirement 3)
+CREATE OR REPLACE FUNCTION public.prevent_profile_role_update()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.role IS DISTINCT FROM OLD.role THEN
+        RAISE EXCEPTION 'Role changes are strictly restricted and cannot be performed via client updates.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER enforce_profile_role_protection
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_profile_role_update();
 
 -- 4. PRODUCTS TABLE
 CREATE TABLE public.products (
@@ -98,20 +115,32 @@ CREATE POLICY "Anyone can view live sessions"
     ON public.live_sessions FOR SELECT 
     USING (true);
 
-CREATE POLICY "Sellers can create live sessions" 
+CREATE POLICY "Sellers can create live sessions for their own products" 
     ON public.live_sessions FOR INSERT 
     WITH CHECK (
         auth.uid() = host_id AND 
         EXISTS (
             SELECT 1 FROM public.profiles 
             WHERE id = auth.uid() AND role = 'seller'
+        ) AND (
+            product_id IS NULL OR EXISTS (
+                SELECT 1 FROM public.products 
+                WHERE id = product_id AND seller_id = auth.uid()
+            )
         )
     );
 
 CREATE POLICY "Sellers can update their own live sessions" 
     ON public.live_sessions FOR UPDATE 
     USING (auth.uid() = host_id)
-    WITH CHECK (auth.uid() = host_id);
+    WITH CHECK (
+        auth.uid() = host_id AND (
+            product_id IS NULL OR EXISTS (
+                SELECT 1 FROM public.products 
+                WHERE id = product_id AND seller_id = auth.uid()
+            )
+        )
+    );
 
 CREATE POLICY "Sellers can delete their own live sessions" 
     ON public.live_sessions FOR DELETE 
@@ -135,7 +164,13 @@ CREATE POLICY "Anyone in a live stream can view chat messages"
 
 CREATE POLICY "Authenticated users can post chat messages" 
     ON public.live_messages FOR INSERT 
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id AND
+        EXISTS (
+            SELECT 1 FROM public.live_sessions 
+            WHERE live_id = live_messages.live_id AND status = 'live'
+        )
+    );
 
 -- 7. SUPABASE STORAGE BUCKET FOR PRODUCT IMAGES
 INSERT INTO storage.buckets (id, name, public) 
@@ -146,11 +181,14 @@ CREATE POLICY "Public Read Access for Product Images"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'product-images');
 
-CREATE POLICY "Sellers Upload Product Images"
+CREATE POLICY "Only Verified Sellers Can Upload Product Images"
 ON storage.objects FOR INSERT
 WITH CHECK (
     bucket_id = 'product-images' AND 
-    auth.role() = 'authenticated'
+    EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = auth.uid() AND role = 'seller'
+    )
 );
 
 -- Enable Realtime for Live Sessions and Messages

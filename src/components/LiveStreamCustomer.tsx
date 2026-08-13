@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { IAgoraRTCClient, IRemoteVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng';
 import { createAgoraClient, fetchAgoraToken } from '../lib/agora';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useLive } from '../context/LiveContext';
@@ -49,8 +50,22 @@ export const LiveStreamCustomer: React.FC<{
         const channelName = session.channel_name || 'reneo-live-kente-showcase';
         const uid = Math.floor(Math.random() * 10000);
 
-        // Fetch token from server with SUBSCRIBER role
-        const tokenData = await fetchAgoraToken(channelName, uid, 'audience');
+        // Get auth token from Supabase if session active
+        let sessionAuthToken: string | undefined = undefined;
+        try {
+          const { data } = await supabase.auth.getSession();
+          sessionAuthToken = data?.session?.access_token;
+        } catch {
+          // ignore
+        }
+
+        // Fetch token from server with SUBSCRIBER role derived server-side
+        let tokenData;
+        try {
+          tokenData = await fetchAgoraToken(channelName, uid, session.id, sessionAuthToken);
+        } catch (tokenErr) {
+          console.warn('Agora token request notice:', tokenErr);
+        }
 
         // Handle remote stream publishing events
         client.on('user-published', async (user, mediaType) => {
@@ -63,15 +78,17 @@ export const LiveStreamCustomer: React.FC<{
           }
         });
 
-        if (tokenData.token && tokenData.appId && !tokenData.isMock) {
+        if (tokenData?.token && tokenData?.appId) {
           await client.join(tokenData.appId, channelName, tokenData.token, uid);
         }
       } catch (err) {
-        console.warn('Audience Agora stream fallback:', err);
+        console.warn('Audience Agora stream notification:', err);
       }
     }
 
-    initAudience();
+    if (session.status !== 'ended') {
+      initAudience();
+    }
 
     return () => {
       mounted = false;
@@ -116,15 +133,33 @@ export const LiveStreamCustomer: React.FC<{
           ref={videoRef}
           className="w-full h-full object-cover bg-slate-900 flex items-center justify-center relative"
         >
-          {/* Simulated HD Live Stream Video background when camera feed is simulated */}
-          <div className="absolute inset-0 z-0">
-            <img
-              src={currentFeatured?.image_url || 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=1200'}
-              alt="Live Stream Streamer"
-              className="w-full h-full object-cover opacity-80 filter brightness-90"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-slate-950/60" />
-          </div>
+          {session.status === 'ended' ? (
+            <div className="absolute inset-0 z-40 bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center space-y-4 animate-fade-in">
+              <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-3xl text-rose-400">
+                <X className="w-10 h-10" />
+              </div>
+              <h3 className="text-xl font-bold text-white">This Live Session Has Ended</h3>
+              <p className="text-xs text-slate-400 max-w-sm">
+                The seller has closed this live stream. You can still explore and purchase featured items in the catalog.
+              </p>
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all"
+              >
+                Back to Live Sessions
+              </button>
+            </div>
+          ) : (
+            /* Stream Video background overlay */
+            <div className="absolute inset-0 z-0">
+              <img
+                src={currentFeatured?.image_url || 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=1200'}
+                alt="Live Stream Streamer"
+                className="w-full h-full object-cover opacity-80 filter brightness-90"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-slate-950/60" />
+            </div>
+          )}
         </div>
 
         {/* Top Bar Overlay */}
