@@ -29,8 +29,8 @@ app.post("/api/agora-token", async (req, res) => {
   try {
     const { channelName, uid, sessionId } = req.body;
 
-    if (!channelName) {
-      return res.status(400).json({ error: "channelName is required" });
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId is required to request a stream token" });
     }
 
     const appId = process.env.AGORA_APP_ID;
@@ -45,49 +45,75 @@ app.post("/api/agora-token", async (req, res) => {
     }
 
     const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "A valid Supabase authentication token is required in Authorization header.",
+      });
+    }
+
+    const authToken = authHeader.split(" ")[1];
     let authenticatedUserId: string | null = null;
     let userRole: string = "customer";
 
-    // 1. Verify authenticated user if Auth header provided
-    if (authHeader && authHeader.startsWith("Bearer ") && supabase) {
-      const authToken = authHeader.split(" ")[1];
-      const { data: { user }, error } = await supabase.auth.getUser(authToken);
-      if (!error && user) {
-        authenticatedUserId = user.id;
+    if (supabase) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser(authToken);
+      if (authError || !user) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          message: "Invalid or expired authentication token.",
+        });
+      }
 
-        // Fetch user's profile from database
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single();
-        if (profile) {
-          userRole = profile.role;
-        }
+      authenticatedUserId = user.id;
+
+      // Fetch user profile from Supabase
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (profile) {
+        userRole = profile.role;
       }
     }
 
-    // 2. Validate requested live session & derive role server-side
+    // 2. Validate requested live session
+    let targetChannelName = channelName || sessionId;
     let isSessionHost = false;
 
-    if (sessionId && supabase) {
-      const { data: session } = await supabase
+    if (supabase) {
+      const { data: session, error: sessionError } = await supabase
         .from("live_sessions")
-        .select("host_id, status")
+        .select("live_id, channel_name, host_id, status")
         .eq("live_id", sessionId)
         .single();
 
-      if (session) {
-        if (session.status === "ended") {
-          return res.status(400).json({ error: "This live session has ended." });
-        }
-        if (authenticatedUserId && session.host_id === authenticatedUserId && userRole === "seller") {
-          isSessionHost = true;
-        }
+      if (sessionError || !session) {
+        return res.status(404).json({
+          error: "Live session not found",
+          message: `No active session found with ID '${sessionId}'.`,
+        });
+      }
+
+      if (session.status === "ended") {
+        return res.status(410).json({
+          error: "Session ended",
+          message: "This live session has ended and can no longer be accessed.",
+        });
+      }
+
+      if (session.channel_name) {
+        targetChannelName = session.channel_name;
+      }
+
+      if (authenticatedUserId && session.host_id === authenticatedUserId && userRole === "seller") {
+        isSessionHost = true;
       }
     }
 
-    // Assign RTC Role based strictly on server authorization (Requirement 7)
+    // Assign RTC Role based strictly on server authorization
     // Only verified session host gets PUBLISHER role. All others receive SUBSCRIBER.
     const rtcRole = isSessionHost ? RtcRole.PUBLISHER : RtcRole.SUBSCRIBER;
     const derivedRoleString = isSessionHost ? "host" : "audience";
@@ -100,7 +126,7 @@ app.post("/api/agora-token", async (req, res) => {
     const token = RtcTokenBuilder.buildTokenWithUid(
       appId,
       appCertificate,
-      channelName,
+      targetChannelName,
       numericUid,
       rtcRole,
       expirationTimeInSeconds,
@@ -110,7 +136,7 @@ app.post("/api/agora-token", async (req, res) => {
     return res.json({
       token,
       appId,
-      channelName,
+      channelName: targetChannelName,
       uid: numericUid,
       role: derivedRoleString,
       expiresIn: expirationTimeInSeconds,

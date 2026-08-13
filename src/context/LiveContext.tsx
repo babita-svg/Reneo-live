@@ -146,7 +146,38 @@ export const LiveProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       supabase.removeChannel(sessionChannel);
     };
-  }, [activeSession]);
+  }, [activeSession?.id]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeSession) return;
+
+    // Realtime subscription specifically for current live session messages
+    const messageChannel = supabase
+      .channel(`live_messages:${activeSession.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'live_messages',
+        filter: `live_id=eq.${activeSession.id}`,
+      }, (payload) => {
+        const newMsg = payload.new;
+        setChatMessages((prev) => {
+          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          return [...prev, {
+            id: newMsg.id,
+            user_name: newMsg.user_name || 'Anonymous',
+            user_role: newMsg.user_role || 'customer',
+            message: newMsg.message,
+            timestamp: newMsg.created_at || new Date().toISOString(),
+          }];
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messageChannel);
+    };
+  }, [activeSession?.id]);
 
   const createProduct = async (productData: Omit<Product, 'id' | 'created_at'>): Promise<Product> => {
     const newProd: Product = {
@@ -250,15 +281,37 @@ export const LiveProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const sendChatMessage = (message: string, userName: string, role: 'seller' | 'customer') => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+    if (trimmed.length > 500) {
+      setError('Chat message is too long (maximum 500 characters).');
+      return;
+    }
+
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       user_name: userName,
       user_role: role,
-      message,
+      message: trimmed,
       timestamp: new Date().toISOString(),
     };
 
     setChatMessages((prev) => [...prev, newMsg]);
+
+    if (isSupabaseConfigured && activeSession) {
+      supabase.from('live_messages').insert([
+        {
+          live_id: activeSession.id,
+          user_name: userName,
+          user_role: role,
+          message: trimmed,
+        },
+      ]).then(({ error }) => {
+        if (error) {
+          console.warn('Live message insert error:', error.message);
+        }
+      });
+    }
   };
 
   const sendEmojiReaction = (emoji: string) => {
