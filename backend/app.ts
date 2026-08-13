@@ -104,9 +104,14 @@ app.post("/api/agora-token", async (req, res) => {
         });
       }
 
-      if (session.channel_name) {
-        targetChannelName = session.channel_name;
+      const canonicalChannel = session.channel_name || session.live_id;
+      if (channelName && channelName !== canonicalChannel && channelName !== session.live_id) {
+        return res.status(400).json({
+          error: "Channel mismatch",
+          message: "The requested channelName does not match the canonical channel for this session.",
+        });
       }
+      targetChannelName = canonicalChannel;
 
       if (authenticatedUserId && session.host_id === authenticatedUserId && userRole === "seller") {
         isSessionHost = true;
@@ -119,7 +124,7 @@ app.post("/api/agora-token", async (req, res) => {
     const derivedRoleString = isSessionHost ? "host" : "audience";
 
     const numericUid = uid ? Number(uid) || 0 : 0;
-    const expirationTimeInSeconds = 3600 * 24; // 24 hours
+    const expirationTimeInSeconds = 3600; // 1 hour token validity
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
 
