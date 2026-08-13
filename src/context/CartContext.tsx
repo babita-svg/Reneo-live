@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Product } from '../types';
-import confetti from 'canvas-confetti';
 
 interface CartContextType {
   items: CartItem[];
@@ -8,38 +7,31 @@ interface CartContextType {
   removeFromCart: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
-  isOpen: boolean;
-  setIsOpen: (open: boolean) => void;
+  isCartOpen: boolean;
+  setIsCartOpen: (open: boolean) => void;
+  totalItems: number;
   totalAmount: number;
-  totalItemsCount: number;
-  lastAddedProduct: Product | null;
-  checkoutSuccess: boolean;
-  processCheckout: () => void;
 }
-
-const CART_LOCAL_STORAGE_KEY = 'reneo_cart_items';
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem(CART_LOCAL_STORAGE_KEY);
+    const saved = localStorage.getItem('reneo_cart');
     if (saved) {
       try {
         return JSON.parse(saved);
-      } catch (e) {
-        return [];
+      } catch {
+        // ignore
       }
     }
     return [];
   });
 
-  const [isOpen, setIsOpen] = useState(false);
-  const [lastAddedProduct, setLastAddedProduct] = useState<Product | null>(null);
-  const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(CART_LOCAL_STORAGE_KEY, JSON.stringify(items));
+    localStorage.setItem('reneo_cart', JSON.stringify(items));
   }, [items]);
 
   const addToCart = (product: Product, quantity = 1) => {
@@ -54,9 +46,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return [...prev, { product, quantity }];
     });
-
-    setLastAddedProduct(product);
-    setTimeout(() => setLastAddedProduct(null), 3000);
+    setIsCartOpen(true);
   };
 
   const removeFromCart = (productId: string) => {
@@ -79,30 +69,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setItems([]);
   };
 
-  const processCheckout = () => {
-    if (items.length === 0) return;
-    setCheckoutSuccess(true);
-    
-    // Confetti animation celebration
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 }
-    });
-
-    setTimeout(() => {
-      setItems([]);
-      setCheckoutSuccess(false);
-      setIsOpen(false);
-    }, 2500);
-  };
-
+  const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
   const totalAmount = items.reduce(
     (sum, item) => sum + item.product.price * item.quantity,
     0
   );
-
-  const totalItemsCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
     <CartContext.Provider
@@ -112,13 +83,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         removeFromCart,
         updateQuantity,
         clearCart,
-        isOpen,
-        setIsOpen,
+        isCartOpen,
+        setIsCartOpen,
+        totalItems,
         totalAmount,
-        totalItemsCount,
-        lastAddedProduct,
-        checkoutSuccess,
-        processCheckout,
       }}
     >
       {children}
@@ -128,6 +96,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useCart = () => {
   const context = useContext(CartContext);
-  if (!context) throw new Error('useCart must be used within a CartProvider');
+  if (!context) {
+    throw new Error('useCart must be used within a CartProvider');
+  }
   return context;
 };

@@ -1,315 +1,263 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useLive } from '../context/LiveContext';
-import { useAuth } from '../context/AuthContext';
-import { useCart } from '../context/CartContext';
-import { AgoraManager } from '../lib/agora';
-import { ProductDetailModal } from './ProductDetailModal';
 import {
-  Radio,
-  Users,
-  Send,
-  Eye,
-  ShoppingCart,
   Heart,
-  Flame,
-  ThumbsUp,
+  Send,
+  ShoppingBag,
   Sparkles,
-  ArrowLeft,
+  Users,
   X,
-  Share2,
   Volume2,
   VolumeX,
-  Maximize2
 } from 'lucide-react';
+import { IAgoraRTCClient, IRemoteVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng';
+import { createAgoraClient, fetchAgoraToken } from '../lib/agora';
+import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
+import { useLive } from '../context/LiveContext';
+import { LiveSession } from '../types';
+import { ProductDetailModal } from './ProductDetailModal';
 
-export const LiveStreamCustomer: React.FC<{ onLeaveStream: () => void }> = ({ onLeaveStream }) => {
+export const LiveStreamCustomer: React.FC<{
+  session: LiveSession;
+  onClose: () => void;
+}> = ({ session, onClose }) => {
+  const { user } = useAuth();
+  const { addToCart } = useCart();
   const {
-    currentSession,
+    products,
     chatMessages,
     sendChatMessage,
     sendEmojiReaction,
     floatingEmojis,
-    selectedProductForDetail,
-    setSelectedProductForDetail,
-    addStreamError
   } = useLive();
 
-  const { user } = useAuth();
-  const { addToCart } = useCart();
+  const [messageInput, setMessageInput] = useState('');
+  const [muted, setMuted] = useState(false);
+  const [selectedProductForModal, setSelectedProductForModal] = useState<any>(null);
 
-  const videoContainerRef = useRef<HTMLDivElement>(null);
-  const agoraRef = useRef<AgoraManager | null>(null);
+  const videoRef = useRef<HTMLDivElement>(null);
+  const agoraClientRef = useRef<IAgoraRTCClient | null>(null);
 
-  const [messageText, setMessageText] = useState('');
-  const [isMuted, setIsMuted] = useState(false);
-  const [addedToast, setAddedToast] = useState(false);
-
-  // Requirement A5: Customer joins stream as AUDIENCE / SUBSCRIBER role. Must NOT publish stream.
   useEffect(() => {
-    const manager = new AgoraManager();
-    agoraRef.current = manager;
+    let mounted = true;
 
-    const channelName = currentSession?.live_id || 'reneo_demo_channel';
-    const numericUid = Math.floor(Math.random() * 899999) + 100000;
+    async function initAudience() {
+      try {
+        const client = createAgoraClient();
+        agoraClientRef.current = client;
 
-    manager.joinAudience(
-      channelName,
-      numericUid,
-      (remoteVideoTrack) => {
-        if (videoContainerRef.current) {
-          videoContainerRef.current.innerHTML = '';
-          remoteVideoTrack.play(videoContainerRef.current);
+        const channelName = session.channel_name || 'reneo-live-kente-showcase';
+        const uid = Math.floor(Math.random() * 10000);
+
+        // Fetch token from server with SUBSCRIBER role
+        const tokenData = await fetchAgoraToken(channelName, uid, 'audience');
+
+        // Handle remote stream publishing events
+        client.on('user-published', async (user, mediaType) => {
+          await client.subscribe(user, mediaType);
+          if (mediaType === 'video' && videoRef.current) {
+            user.videoTrack?.play(videoRef.current);
+          }
+          if (mediaType === 'audio') {
+            user.audioTrack?.play();
+          }
+        });
+
+        if (tokenData.token && tokenData.appId && !tokenData.isMock) {
+          await client.join(tokenData.appId, channelName, tokenData.token, uid);
         }
-      },
-      (_remoteAudioTrack) => {
-        // Remote host audio played automatically
-      },
-      {
-        onStreamEnded: () => {
-          addStreamError({
-            id: `err_${Date.now()}`,
-            type: 'ended',
-            title: 'Live Stream Ended',
-            message: 'The seller has ended this live broadcast session.',
-          });
-        },
+      } catch (err) {
+        console.warn('Audience Agora stream fallback:', err);
       }
-    );
+    }
+
+    initAudience();
 
     return () => {
-      manager.stopAndLeave();
+      mounted = false;
+      if (agoraClientRef.current) {
+        agoraClientRef.current.leave();
+      }
     };
-  }, [currentSession?.live_id, addStreamError]);
+  }, [session]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim()) return;
-    sendChatMessage(messageText);
-    setMessageText('');
-  };
-
-  const handleQuickAddToCart = () => {
-    if (currentSession?.product) {
-      addToCart(currentSession.product, 1);
-      setAddedToast(true);
-      setTimeout(() => setAddedToast(false), 2000);
-    }
+    if (!messageInput.trim()) return;
+    sendChatMessage(messageInput.trim(), user?.name || 'Customer', 'customer');
+    setMessageInput('');
   };
 
   const handleEmojiClick = (emoji: string) => {
     sendEmojiReaction(emoji);
   };
 
-  const handleToggleMute = () => {
-    setIsMuted(!isMuted);
-  };
+  const currentFeatured = session.featured_product || products[0];
 
   return (
-    <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-4">
-      
-      {/* Top Header Controls */}
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={onLeaveStream}
-          className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 text-xs font-semibold transition"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Live Feed
-        </button>
+    <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col lg:flex-row overflow-hidden">
+      {/* Video Stream Viewer Screen */}
+      <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
+        {/* Floating Emoji Canvas Overlay */}
+        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
+          {floatingEmojis.map((e) => (
+            <div
+              key={e.id}
+              style={{ left: `${e.left}%` }}
+              className="absolute bottom-12 text-3xl animate-float opacity-90 transition-all duration-1000"
+            >
+              {e.emoji}
+            </div>
+          ))}
+        </div>
 
-        {addedToast && (
-          <div className="bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-lg animate-bounce flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4" />
-            Item added to your cart!
+        {/* Video Canvas Container */}
+        <div
+          ref={videoRef}
+          className="w-full h-full object-cover bg-slate-900 flex items-center justify-center relative"
+        >
+          {/* Simulated HD Live Stream Video background when camera feed is simulated */}
+          <div className="absolute inset-0 z-0">
+            <img
+              src={currentFeatured?.image_url || 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=1200'}
+              alt="Live Stream Streamer"
+              className="w-full h-full object-cover opacity-80 filter brightness-90"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-slate-950/60" />
+          </div>
+        </div>
+
+        {/* Top Bar Overlay */}
+        <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
+          <div className="flex items-center space-x-3 bg-slate-950/80 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-slate-800 shadow-xl">
+            <div className="flex items-center space-x-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+              <span className="text-xs font-extrabold text-white uppercase tracking-wider">LIVE</span>
+            </div>
+            <div className="h-4 w-px bg-slate-800" />
+            <div className="flex items-center space-x-1.5 text-xs text-slate-300">
+              <Users className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-bold">{session.viewer_count || 142}</span>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-2 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-800 backdrop-blur-md transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Bottom Left: Featured Commerce Overlay Card */}
+        {currentFeatured && (
+          <div className="absolute bottom-6 left-4 right-4 sm:right-auto sm:max-w-md bg-slate-900/95 backdrop-blur-xl border border-amber-500/40 rounded-3xl p-4 z-20 shadow-2xl flex items-center space-x-4">
+            <img
+              src={currentFeatured.image_url}
+              alt={currentFeatured.title}
+              className="w-16 h-16 rounded-2xl object-cover border border-slate-800 flex-shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-1 text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                <Sparkles className="w-3 h-3" />
+                <span>Now Showcasing</span>
+              </div>
+              <h4 className="text-sm font-bold text-white truncate">{currentFeatured.title}</h4>
+              <p className="text-sm font-extrabold text-amber-400">${currentFeatured.price} USD</p>
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <button
+                onClick={() => addToCart(currentFeatured)}
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center space-x-1.5 transition-all"
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>Buy</span>
+              </button>
+
+              <button
+                onClick={() => setSelectedProductForModal(currentFeatured)}
+                className="text-[11px] font-semibold text-slate-400 hover:text-amber-400 underline text-center"
+              >
+                Details
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Requirement A9: Responsive Layout (Mobile overlay & Desktop Split) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Live Stream Stage (2 cols on Desktop, Full Overlay on Mobile) */}
-        <div className="lg:col-span-2 relative bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl aspect-[9/16] sm:aspect-video flex flex-col justify-between">
-          
-          {/* Agora Stream Video Canvas */}
-          <div ref={videoContainerRef} className="absolute inset-0 w-full h-full object-cover z-0" />
-
-          {/* Floating Emoji Reaction Layer (Part B Bonus) */}
-          <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
-            {floatingEmojis.map((e) => (
-              <span
-                key={e.id}
-                style={{ left: `${e.leftPercent}%` }}
-                className="absolute bottom-20 text-2xl animate-floatUp opacity-90 transition-all"
-              >
-                {e.emoji}
-              </span>
-            ))}
+      {/* Right Column: Chat Room & Interactive Reactions */}
+      <div className="w-full lg:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-80 lg:h-full">
+        {/* Chat Header */}
+        <div className="p-4 border-b border-slate-800/80 bg-slate-950/40 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <p className="text-xs font-bold text-white">Stream Chat</p>
           </div>
-
-          {/* Top Host Info Overlay */}
-          <div className="relative z-20 p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/40 to-transparent flex items-center justify-between">
-            <div className="flex items-center gap-3 bg-slate-950/70 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800">
-              <img
-                src={currentSession?.host_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=300'}
-                alt={currentSession?.host_name}
-                className="w-8 h-8 rounded-full object-cover ring-2 ring-red-500"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-xs text-white">{currentSession?.host_name}</span>
-                  <span className="px-1.5 py-0.2 text-[9px] font-black uppercase bg-red-600 text-white rounded-full">
-                    LIVE
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-300 font-medium">Host Broadcaster</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-slate-950/70 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs font-bold text-amber-400">
-                <Users className="w-3.5 h-3.5" />
-                <span>{currentSession?.viewer_count || 1}</span>
-              </div>
-
-              <button
-                onClick={handleToggleMute}
-                className="p-2 bg-slate-950/70 backdrop-blur-md text-slate-200 rounded-2xl border border-slate-800"
-              >
-                {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Bottom Live Commerce Product Showcase Banner (Requirement A6) */}
-          <div className="relative z-20 p-4 bg-gradient-to-t from-slate-950/95 via-slate-950/70 to-transparent">
-            {currentSession?.product && (
-              <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800/90 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={currentSession.product.image}
-                    alt={currentSession.product.name}
-                    className="w-14 h-14 rounded-xl object-cover ring-2 ring-amber-500/50"
-                  />
-                  <div>
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
-                      Featured Product
-                    </span>
-                    <p className="text-xs font-extrabold text-slate-100 line-clamp-1">
-                      {currentSession.product.name}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs font-black text-amber-400">
-                        ${currentSession.product.price.toFixed(2)} USD
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        Stock: {currentSession.product.stock}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Requirement A6: "View Product" & "Add to Cart" */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSelectedProductForDetail(currentSession.product!)}
-                    className="flex-1 sm:flex-none px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition flex items-center justify-center gap-1.5"
-                  >
-                    <Eye className="w-3.5 h-3.5 text-amber-400" />
-                    View Product
-                  </button>
-
-                  <button
-                    onClick={handleQuickAddToCart}
-                    className="flex-1 sm:flex-none px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 text-xs font-extrabold rounded-xl transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-1.5"
-                  >
-                    <ShoppingCart className="w-3.5 h-3.5" />
-                    Add to Cart
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <span className="text-[11px] text-amber-400 font-semibold">{session.seller_name}</span>
         </div>
 
-        {/* Real-Time Live Stream Chat & Emoji Bar (Requirement A7 & Part B) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-col justify-between h-[520px]">
-          
-          <div>
-            <div className="pb-3 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
-                <Radio className="w-4 h-4 text-red-500 animate-pulse" />
-                Live Customer Chat
-              </h3>
-              <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-semibold">
-                Real-Time
-              </span>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="mt-3 space-y-3 overflow-y-auto max-h-[340px] pr-1">
-              {chatMessages.map((msg) => (
-                <div key={msg.id} className="flex items-start gap-2 text-xs">
-                  <img
-                    src={msg.user_avatar}
-                    alt={msg.user_name}
-                    className="w-6 h-6 rounded-full object-cover mt-0.5 ring-1 ring-slate-700"
-                  />
-                  <div className="flex-1 bg-slate-800/60 p-2.5 rounded-xl border border-slate-800/80">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className={`font-bold text-[11px] ${msg.user_role === 'seller' ? 'text-amber-400' : 'text-orange-400'}`}>
-                        {msg.user_name} {msg.user_role === 'seller' && '(Host)'}
-                      </span>
-                      <span className="text-[9px] text-slate-500">{msg.timestamp}</span>
-                    </div>
-                    <p className="text-slate-200 text-xs leading-snug">{msg.message}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            {/* Quick Floating Emoji Reaction Bar (Part B Bonus) */}
-            <div className="flex items-center justify-around py-2 bg-slate-950/60 rounded-xl border border-slate-800/80 mb-2">
-              {['❤️', '🔥', '👏', '🛍️', '😍'].map((emoji) => (
-                <button
-                  key={emoji}
-                  onClick={() => handleEmojiClick(emoji)}
-                  className="text-lg hover:scale-125 transition-transform p-1"
-                  title="Send Reaction"
+        {/* Live Chat Messages Feed */}
+        <div className="flex-1 p-4 overflow-y-auto space-y-3">
+          {chatMessages.map((msg) => (
+            <div key={msg.id} className="text-xs space-y-0.5 animate-fade-in">
+              <div className="flex items-center space-x-1.5">
+                <span
+                  className={`font-bold ${
+                    msg.user_role === 'seller' ? 'text-amber-400' : 'text-slate-300'
+                  }`}
                 >
-                  {emoji}
-                </button>
-              ))}
+                  {msg.user_name}
+                </span>
+                {msg.user_role === 'seller' && (
+                  <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold">
+                    HOST
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-200 bg-slate-800/60 p-2.5 rounded-xl border border-slate-800/80">
+                {msg.message}
+              </p>
             </div>
-
-            {/* Chat Input Form */}
-            <form onSubmit={handleSendMessage} className="flex gap-2">
-              <input
-                type="text"
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder="Ask seller a question or comment..."
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-              />
-              <button
-                type="submit"
-                className="p-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition shadow-md shadow-amber-500/10"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
-          </div>
-
+          ))}
         </div>
+
+        {/* Floating Reaction Bar */}
+        <div className="px-4 py-2 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-around">
+          {['❤️', '🔥', '👏', '😍', '🎉'].map((emoji) => (
+            <button
+              key={emoji}
+              onClick={() => handleEmojiClick(emoji)}
+              className="text-lg hover:scale-125 transition-transform p-1.5 bg-slate-800/40 hover:bg-slate-800 rounded-xl"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
+        {/* Chat Input */}
+        <form onSubmit={handleSendMessage} className="p-3 bg-slate-950 border-t border-slate-800 flex items-center space-x-2">
+          <input
+            type="text"
+            value={messageInput}
+            onChange={(e) => setMessageInput(e.target.value)}
+            placeholder="Ask a question or comment..."
+            className="flex-1 px-3.5 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+          />
+          <button
+            type="submit"
+            className="p-2 bg-amber-500 text-slate-950 rounded-xl hover:bg-amber-400 font-bold transition-colors"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
       </div>
 
-      {/* Non-Disruptive Product Inspection Modal Overlay (Requirement A6) */}
-      {selectedProductForDetail && (
+      {/* Product Detail Modal */}
+      {selectedProductForModal && (
         <ProductDetailModal
-          product={selectedProductForDetail}
-          onClose={() => setSelectedProductForDetail(null)}
+          product={selectedProductForModal}
+          onClose={() => setSelectedProductForModal(null)}
         />
       )}
     </div>

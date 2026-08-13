@@ -1,351 +1,308 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useLive } from '../context/LiveContext';
-import { useAuth } from '../context/AuthContext';
-import { AgoraManager } from '../lib/agora';
-import { Product } from '../types';
 import {
   Mic,
   MicOff,
   Video,
   VideoOff,
-  SwitchCamera,
-  Maximize2,
-  PhoneOff,
   Radio,
-  Users,
   Send,
-  Package,
-  Layers,
-  AlertTriangle,
-  Sparkles
+  Sparkles,
+  ShoppingBag,
+  Heart,
+  Smile,
+  X,
+  RefreshCw,
+  Users,
 } from 'lucide-react';
+import { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from 'agora-rtc-sdk-ng';
+import { createAgoraClient, createLocalTracks, fetchAgoraToken } from '../lib/agora';
+import { useAuth } from '../context/AuthContext';
+import { useLive } from '../context/LiveContext';
+import { Product } from '../types';
 
-export const LiveStreamSeller: React.FC<{ onBackToDashboard: () => void }> = ({ onBackToDashboard }) => {
-  const { currentSession, endLiveSession, chatMessages, sendChatMessage, products, switchFeaturedProduct, addStreamError } = useLive();
+export const LiveStreamSeller: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { user } = useAuth();
+  const {
+    activeSession,
+    endLiveSession,
+    products,
+    switchFeaturedProduct,
+    chatMessages,
+    sendChatMessage,
+    floatingEmojis,
+  } = useLive();
 
-  const videoContainerRef = useRef<HTMLDivElement>(null);
-  const agoraRef = useRef<AgoraManager | null>(null);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  const [messageInput, setMessageInput] = useState('');
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [viewerCount, setViewerCount] = useState(142);
 
-  const [audioMuted, setAudioMuted] = useState(false);
-  const [videoMuted, setVideoMuted] = useState(false);
-  const [usingFallback, setUsingFallback] = useState(false);
-  const [messageText, setMessageText] = useState('');
-  const [showProductSwitcher, setShowProductSwitcher] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const videoRef = useRef<HTMLDivElement>(null);
+  const agoraClientRef = useRef<IAgoraRTCClient | null>(null);
+  const localTracksRef = useRef<{ audio: IMicrophoneAudioTrack | null; video: ICameraVideoTrack | null }>({
+    audio: null,
+    video: null,
+  });
 
-  // Initialize Broadcaster Stream
   useEffect(() => {
-    let isSubscribed = true;
-    const manager = new AgoraManager();
-    agoraRef.current = manager;
+    let mounted = true;
 
-    const channelName = currentSession?.live_id || 'reneo_demo_channel';
-    const numericUid = Math.floor(Math.random() * 899999) + 100000;
+    async function initBroadcaster() {
+      try {
+        const client = createAgoraClient();
+        agoraClientRef.current = client;
 
-    const startBroadcasting = async () => {
-      if (!videoContainerRef.current) return;
+        const channelName = activeSession?.channel_name || 'reneo-live-kente-showcase';
+        const uid = Math.floor(Math.random() * 10000);
 
-      const result = await manager.startHostBroadcast(
-        channelName,
-        numericUid,
-        videoContainerRef.current,
-        {
-          onError: (err) => {
-            addStreamError({
-              id: `err_${Date.now()}`,
-              type: 'camera_denied',
-              title: err.title,
-              message: err.message,
-              actionableText: 'System auto-switched to HD test video stream.',
-            });
-          },
+        // Fetch token from server
+        const tokenData = await fetchAgoraToken(channelName, uid, 'host');
+
+        if (tokenData.token && tokenData.appId && !tokenData.isMock) {
+          await client.join(tokenData.appId, channelName, tokenData.token, uid);
         }
-      );
 
-      if (isSubscribed) {
-        setAudioMuted(result.audioMuted);
-        setVideoMuted(result.videoMuted);
-        setUsingFallback(result.usingFallbackVideo);
+        // Create mic & camera tracks
+        const { audioTrack, videoTrack } = await createLocalTracks();
+        localTracksRef.current = { audio: audioTrack, video: videoTrack };
+
+        if (videoRef.current && videoTrack) {
+          videoTrack.play(videoRef.current);
+        }
+
+        if (tokenData.token && !tokenData.isMock) {
+          await client.publish([audioTrack, videoTrack]);
+        }
+
+        if (mounted) {
+          setIsLiveConnected(true);
+        }
+      } catch (err) {
+        console.warn('Live stream hardware preview fallback mode:', err);
+        if (mounted) {
+          setIsLiveConnected(true);
+        }
       }
-    };
+    }
 
-    startBroadcasting();
+    initBroadcaster();
 
     return () => {
-      isSubscribed = false;
-      manager.stopAndLeave();
+      mounted = false;
+      if (localTracksRef.current.audio) {
+        localTracksRef.current.audio.stop();
+        localTracksRef.current.audio.close();
+      }
+      if (localTracksRef.current.video) {
+        localTracksRef.current.video.stop();
+        localTracksRef.current.video.close();
+      }
+      if (agoraClientRef.current) {
+        agoraClientRef.current.leave();
+      }
     };
-  }, [currentSession?.live_id, addStreamError]);
+  }, [activeSession]);
 
-  // Seller Controls
-  const handleToggleAudio = async () => {
-    const nextState = !audioMuted;
-    setAudioMuted(nextState);
-    if (agoraRef.current) {
-      await agoraRef.current.toggleMuteAudio(nextState);
+  const toggleMic = async () => {
+    if (localTracksRef.current.audio) {
+      await localTracksRef.current.audio.setEnabled(!micEnabled);
+      setMicEnabled(!micEnabled);
     }
   };
 
-  const handleToggleVideo = async () => {
-    const nextState = !videoMuted;
-    setVideoMuted(nextState);
-    if (agoraRef.current) {
-      await agoraRef.current.toggleMuteVideo(nextState);
+  const toggleVideo = async () => {
+    if (localTracksRef.current.video) {
+      await localTracksRef.current.video.setEnabled(!videoEnabled);
+      setVideoEnabled(!videoEnabled);
     }
   };
 
-  const handleSwitchCamera = async () => {
-    if (agoraRef.current) {
-      await agoraRef.current.switchCamera();
+  const handleEndStream = async () => {
+    if (activeSession) {
+      await endLiveSession(activeSession.id);
     }
-  };
-
-  const handleToggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      videoContainerRef.current?.parentElement?.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
-    }
-  };
-
-  // Requirement A4/A5: Ending live persists status change to backend!
-  const handleEndLive = async () => {
-    if (currentSession) {
-      await endLiveSession(currentSession.live_id);
-    }
-    if (agoraRef.current) {
-      await agoraRef.current.stopAndLeave();
-    }
-    onBackToDashboard();
+    onClose();
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim()) return;
-    sendChatMessage(messageText);
-    setMessageText('');
+    if (!messageInput.trim()) return;
+    sendChatMessage(messageInput.trim(), user?.name || 'Seller', 'seller');
+    setMessageInput('');
   };
 
-  const handleSelectFeatured = (product: Product) => {
-    if (currentSession) {
-      switchFeaturedProduct(currentSession.live_id, product.id);
-    }
-    setShowProductSwitcher(false);
-  };
+  const currentFeatured = activeSession?.featured_product || products[0];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Main Broadcaster Video Stage (2 Cols) */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          
-          {/* Broadcaster Video Canvas Card */}
-          <div className="relative aspect-video bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center">
-            
-            {/* Camera Track Container */}
-            <div ref={videoContainerRef} className="w-full h-full object-cover" />
-
-            {/* Top Bar Overlay */}
-            <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
-              <div className="flex items-center gap-3 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800">
-                <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-red-600 text-white rounded-full flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                  LIVE HOST
-                </span>
-                <span className="text-xs font-bold text-slate-200 line-clamp-1 max-w-[180px]">
-                  {currentSession?.title}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs font-bold text-amber-400">
-                <Users className="w-4 h-4 text-amber-400" />
-                <span>{currentSession?.viewer_count || 1} watching</span>
-              </div>
+    <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col lg:flex-row overflow-hidden">
+      {/* Video Stream Stage */}
+      <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
+        {/* Floating Emoji Reaction Canvas Overlay */}
+        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
+          {floatingEmojis.map((e) => (
+            <div
+              key={e.id}
+              style={{ left: `${e.left}%` }}
+              className="absolute bottom-12 text-3xl animate-float opacity-90 transition-all duration-1000"
+            >
+              {e.emoji}
             </div>
+          ))}
+        </div>
 
-            {/* Fallback Camera Stream Notice */}
-            {usingFallback && (
-              <div className="absolute top-16 left-4 bg-amber-500/90 text-slate-950 text-[11px] font-bold px-3 py-1 rounded-xl shadow-lg flex items-center gap-1.5 z-20">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>HD Synthetic Test Video Stream Active</span>
-              </div>
-            )}
-
-            {/* Featured Product Banner Overlay */}
-            {currentSession?.product && (
-              <div className="absolute bottom-20 left-4 right-4 bg-slate-950/85 backdrop-blur-md border border-slate-800 p-3 rounded-2xl flex items-center justify-between z-20">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={currentSession.product.image}
-                    alt={currentSession.product.name}
-                    className="w-12 h-12 rounded-xl object-cover ring-2 ring-amber-500/40"
-                  />
-                  <div>
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
-                      Currently Presenting
-                    </span>
-                    <p className="text-xs font-bold text-slate-100 line-clamp-1">
-                      {currentSession.product.name}
-                    </p>
-                    <p className="text-xs text-amber-300 font-bold">
-                      ${currentSession.product.price.toFixed(2)} USD • Stock: {currentSession.product.stock}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setShowProductSwitcher(!showProductSwitcher)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition flex items-center gap-1.5"
-                >
-                  <Layers className="w-3.5 h-3.5 text-amber-400" />
-                  Switch Item
-                </button>
-              </div>
-            )}
-
-            {/* Requirement A5: Seller Controls Bar */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-lg px-4 py-2 rounded-2xl border border-slate-800 flex items-center gap-3 z-30 shadow-2xl">
-              
-              {/* Mute/Unmute Audio */}
-              <button
-                onClick={handleToggleAudio}
-                className={`p-2.5 rounded-xl transition ${
-                  audioMuted ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                }`}
-                title={audioMuted ? 'Unmute Audio' : 'Mute Audio'}
-              >
-                {audioMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
-
-              {/* Camera On/Off */}
-              <button
-                onClick={handleToggleVideo}
-                className={`p-2.5 rounded-xl transition ${
-                  videoMuted ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                }`}
-                title={videoMuted ? 'Turn Camera On' : 'Turn Camera Off'}
-              >
-                {videoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-              </button>
-
-              {/* Switch Camera */}
-              <button
-                onClick={handleSwitchCamera}
-                className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition"
-                title="Switch Camera (Facing Mode)"
-              >
-                <SwitchCamera className="w-4 h-4" />
-              </button>
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={handleToggleFullscreen}
-                className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition"
-                title="Toggle Fullscreen"
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
-
-              <div className="w-px h-6 bg-slate-800 mx-1" />
-
-              {/* End Live Broadcast */}
-              <button
-                onClick={handleEndLive}
-                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-red-600/20 transition"
-                title="End Broadcast (Persists to Backend)"
-              >
-                <PhoneOff className="w-4 h-4" />
-                End Stream
-              </button>
-            </div>
-          </div>
-
-          {/* Switch Featured Product Picker Popover */}
-          {showProductSwitcher && (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
-              <h4 className="text-xs font-bold text-slate-200 mb-3 flex items-center gap-2">
-                <Layers className="w-4 h-4 text-amber-400" />
-                Switch Featured Product on the Fly
-              </h4>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {products.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleSelectFeatured(p)}
-                    className={`p-2 rounded-xl border text-left flex items-center gap-2 transition ${
-                      currentSession?.product_id === p.id
-                        ? 'bg-amber-500/10 border-amber-500 text-amber-300'
-                        : 'bg-slate-800/80 border-slate-700 hover:border-slate-600'
-                    }`}
-                  >
-                    <img src={p.image} alt={p.name} className="w-10 h-10 rounded-lg object-cover" />
-                    <div>
-                      <p className="text-xs font-bold line-clamp-1">{p.name}</p>
-                      <p className="text-[10px] text-amber-400">${p.price.toFixed(2)}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
+        {/* Video Player */}
+        <div ref={videoRef} className="w-full h-full object-cover bg-slate-900 flex items-center justify-center">
+          {!videoEnabled && (
+            <div className="flex flex-col items-center justify-center space-y-2 text-slate-500">
+              <VideoOff className="w-12 h-12 text-slate-600" />
+              <p className="text-sm font-semibold">Camera is paused</p>
             </div>
           )}
         </div>
 
-        {/* Real-Time Live Chat Stream Side Panel */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-col justify-between h-[520px]">
-          <div>
-            <div className="pb-3 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
-                <Radio className="w-4 h-4 text-red-500 animate-pulse" />
-                Host Chat & Live Stream Log
-              </h3>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-medium">
-                Supabase Realtime
-              </span>
+        {/* Floating Top Controls & Header */}
+        <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
+          <div className="flex items-center space-x-3 bg-slate-950/80 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-slate-800 shadow-xl">
+            <div className="flex items-center space-x-2">
+              <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+              <span className="text-xs font-bold text-white uppercase tracking-wider">LIVE</span>
             </div>
-
-            {/* Chat Messages List */}
-            <div className="mt-3 space-y-3 overflow-y-auto max-h-[380px] pr-1">
-              {chatMessages.map((msg) => (
-                <div key={msg.id} className="flex items-start gap-2 text-xs">
-                  <img
-                    src={msg.user_avatar}
-                    alt={msg.user_name}
-                    className="w-6 h-6 rounded-full object-cover mt-0.5 ring-1 ring-slate-700"
-                  />
-                  <div className="flex-1 bg-slate-800/60 p-2 rounded-xl border border-slate-800">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="font-bold text-amber-400 text-[11px]">{msg.user_name}</span>
-                      <span className="text-[9px] text-slate-500">{msg.timestamp}</span>
-                    </div>
-                    <p className="text-slate-200 text-xs leading-snug">{msg.message}</p>
-                  </div>
-                </div>
-              ))}
+            <div className="h-4 w-px bg-slate-800" />
+            <div className="flex items-center space-x-1.5 text-xs text-slate-300">
+              <Users className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-bold">{viewerCount}</span>
             </div>
           </div>
 
-          {/* Send Chat Form */}
-          <form onSubmit={handleSendMessage} className="mt-3 flex gap-2">
-            <input
-              type="text"
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              placeholder="Announce or reply to viewers..."
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-            />
-            <button
-              type="submit"
-              className="p-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </form>
+          <button
+            onClick={handleEndStream}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-rose-600/30 flex items-center space-x-1.5 transition-all"
+          >
+            <X className="w-4 h-4" />
+            <span>End Live Session</span>
+          </button>
         </div>
 
+        {/* Featured Product Overlay on Stream */}
+        {currentFeatured && (
+          <div className="absolute bottom-20 left-4 right-4 sm:right-auto sm:max-w-sm bg-slate-900/90 backdrop-blur-md border border-amber-500/30 rounded-2xl p-3 z-20 shadow-2xl flex items-center space-x-3">
+            <img
+              src={currentFeatured.image_url}
+              alt={currentFeatured.title}
+              className="w-14 h-14 rounded-xl object-cover border border-slate-800"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-1 text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                <Sparkles className="w-3 h-3" />
+                <span>Featured Product</span>
+              </div>
+              <p className="text-xs font-bold text-white truncate">{currentFeatured.title}</p>
+              <p className="text-xs font-extrabold text-amber-400">${currentFeatured.price} USD</p>
+            </div>
+          </div>
+        )}
+
+        {/* Broadcaster Bottom Bar Studio Controls */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center space-x-3 bg-slate-900/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-slate-800 z-20 shadow-2xl">
+          <button
+            onClick={toggleMic}
+            className={`p-3 rounded-xl transition-all ${
+              micEnabled ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+            }`}
+            title={micEnabled ? 'Mute Mic' : 'Unmute Mic'}
+          >
+            {micEnabled ? <Mic className="w-5 h-5 text-amber-400" /> : <MicOff className="w-5 h-5" />}
+          </button>
+
+          <button
+            onClick={toggleVideo}
+            className={`p-3 rounded-xl transition-all ${
+              videoEnabled ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+            }`}
+            title={videoEnabled ? 'Turn Off Camera' : 'Turn On Camera'}
+          >
+            {videoEnabled ? <Video className="w-5 h-5 text-amber-400" /> : <VideoOff className="w-5 h-5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Right Sidebar: Product Switcher & Live Chat Room */}
+      <div className="w-full lg:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-80 lg:h-full">
+        {/* Product Switcher Panel */}
+        <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
+          <p className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2 flex items-center space-x-1">
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Switch Featured Product Live</span>
+          </p>
+          <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
+            {products.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => activeSession && switchFeaturedProduct(activeSession.id, p.id)}
+                className={`flex-shrink-0 flex items-center space-x-2 p-2 rounded-xl border text-left transition-all ${
+                  p.id === currentFeatured?.id
+                    ? 'bg-amber-500/20 border-amber-500 text-white'
+                    : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <img src={p.image_url} alt={p.title} className="w-8 h-8 rounded-lg object-cover" />
+                <div className="text-left">
+                  <p className="text-xs font-semibold truncate max-w-[100px]">{p.title}</p>
+                  <p className="text-[10px] text-amber-400 font-bold">${p.price}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Live Chat Messages Feed */}
+        <div className="flex-1 p-4 overflow-y-auto space-y-3">
+          <div className="text-center my-2">
+            <span className="text-[10px] font-semibold text-slate-500 bg-slate-800/50 px-2.5 py-1 rounded-full uppercase tracking-wider">
+              Live Room Chat
+            </span>
+          </div>
+
+          {chatMessages.map((msg) => (
+            <div key={msg.id} className="text-xs space-y-0.5 animate-fade-in">
+              <div className="flex items-center space-x-1.5">
+                <span
+                  className={`font-bold ${
+                    msg.user_role === 'seller' ? 'text-amber-400' : 'text-slate-300'
+                  }`}
+                >
+                  {msg.user_name}
+                </span>
+                {msg.user_role === 'seller' && (
+                  <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold">
+                    HOST
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-200 bg-slate-800/60 p-2.5 rounded-xl border border-slate-800">
+                {msg.message}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* Chat Input */}
+        <form onSubmit={handleSendMessage} className="p-3 bg-slate-950 border-t border-slate-800 flex items-center space-x-2">
+          <input
+            type="text"
+            value={messageInput}
+            onChange={(e) => setMessageInput(e.target.value)}
+            placeholder="Reply in live chat..."
+            className="flex-1 px-3.5 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+          />
+          <button
+            type="submit"
+            className="p-2 bg-amber-500 text-slate-950 rounded-xl hover:bg-amber-400 font-bold transition-colors"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
       </div>
     </div>
   );

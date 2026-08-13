@@ -1,71 +1,81 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { CartProvider } from './context/CartContext';
-import { LiveProvider, useLive } from './context/LiveContext';
 import { Navbar } from './components/Navbar';
+import { LiveSessionsList } from './components/LiveSessionsList';
 import { SellerDashboard } from './components/SellerDashboard';
 import { LiveStreamSeller } from './components/LiveStreamSeller';
 import { LiveStreamCustomer } from './components/LiveStreamCustomer';
-import { LiveSessionsList } from './components/LiveSessionsList';
 import { CartDrawer } from './components/CartDrawer';
-import { ErrorAlertContainer } from './components/ErrorAlert';
+import { ErrorAlert } from './components/ErrorAlert';
+import { useAuth } from './context/AuthContext';
+import { useLive } from './context/LiveContext';
 import { LiveSession } from './types';
 
-const MainAppContent: React.FC = () => {
-  const { role } = useAuth();
-  const { currentSession, startLiveSession, joinLiveStream } = useLive();
-  const [viewState, setViewState] = useState<'home' | 'seller_broadcaster' | 'customer_viewer'>('home');
+export function App() {
+  const { user } = useAuth();
+  const { liveSessions, startLiveSession, activeSession, joinLiveSession, leaveActiveSession } = useLive();
 
-  const handleStartLiveFromDashboard = async (productId: string, title: string) => {
-    await startLiveSession(productId, title);
-    setViewState('seller_broadcaster');
+  const [currentView, setCurrentView] = useState<'buyer' | 'seller'>('buyer');
+  const [selectedSessionForCustomer, setSelectedSessionForCustomer] = useState<LiveSession | null>(null);
+  const [isSellerStreaming, setIsSellerStreaming] = useState(false);
+
+  const handleStartLiveSeller = async () => {
+    const session = await startLiveSession('✨ Live Showcase: Handwoven Kente Bags & Summer Kimonos!');
+    setIsSellerStreaming(true);
   };
 
-  const handleSelectSessionFromList = (session: LiveSession) => {
-    joinLiveStream(session);
-    setViewState('customer_viewer');
+  const handleSelectSessionCustomer = (session: LiveSession) => {
+    joinLiveSession(session);
+    setSelectedSessionForCustomer(session);
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
-      <Navbar />
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
+      <Navbar
+        onNavigateToSeller={() => setCurrentView('seller')}
+        onNavigateToLive={() => {
+          setCurrentView('buyer');
+          setSelectedSessionForCustomer(null);
+          setIsSellerStreaming(false);
+        }}
+      />
 
-      <main className="pb-12">
-        {/* Render View based on Active Role & State */}
-        {role === 'seller' ? (
-          viewState === 'seller_broadcaster' ? (
-            <LiveStreamSeller onBackToDashboard={() => setViewState('home')} />
-          ) : (
-            <SellerDashboard onStartLive={handleStartLiveFromDashboard} />
-          )
+      <main className="flex-1 pb-16">
+        {currentView === 'seller' ? (
+          <SellerDashboard onStartLive={handleStartLiveSeller} />
         ) : (
-          viewState === 'customer_viewer' ? (
-            <LiveStreamCustomer onLeaveStream={() => setViewState('home')} />
-          ) : (
-            <LiveSessionsList onSelectSession={handleSelectSessionFromList} />
-          )
+          <LiveSessionsList
+            onSelectSession={handleSelectSessionCustomer}
+            onNavigateToSeller={() => setCurrentView('seller')}
+          />
         )}
       </main>
 
+      {/* Broadcaster (Seller Studio) Fullscreen Overlay */}
+      {isSellerStreaming && (
+        <LiveStreamSeller
+          onClose={() => {
+            setIsSellerStreaming(false);
+            leaveActiveSession();
+          }}
+        />
+      )}
+
+      {/* Audience (Customer Live Stream) Fullscreen Overlay */}
+      {selectedSessionForCustomer && (
+        <LiveStreamCustomer
+          session={selectedSessionForCustomer}
+          onClose={() => {
+            setSelectedSessionForCustomer(null);
+            leaveActiveSession();
+          }}
+        />
+      )}
+
+      {/* Cart Drawer & Global Error Alert Toast */}
       <CartDrawer />
-      <ErrorAlertContainer />
+      <ErrorAlert />
     </div>
   );
-};
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <LiveProvider>
-        <CartProvider>
-          <MainAppContent />
-        </CartProvider>
-      </LiveProvider>
-    </AuthProvider>
-  );
 }
+
+export default App;

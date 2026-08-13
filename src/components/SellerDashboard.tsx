@@ -1,214 +1,172 @@
 import React, { useState } from 'react';
+import { Plus, Radio, Package, DollarSign, Eye, Sparkles } from 'lucide-react';
 import { useLive } from '../context/LiveContext';
-import { useAuth } from '../context/AuthContext';
-import { Product } from '../types';
 import { CreateProductModal } from './CreateProductModal';
-import { Store, Plus, Radio, Trash2, PackageCheck, AlertCircle, ShoppingBag, Eye } from 'lucide-react';
 
-export const SellerDashboard: React.FC<{ onStartLive: (productId: string, title: string) => void }> = ({ onStartLive }) => {
-  const { sellerProducts, deleteProduct } = useLive();
-  const { user } = useAuth();
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedProductForLive, setSelectedProductForLive] = useState<Product | null>(null);
-  const [streamTitle, setStreamTitle] = useState('');
-  const [showLaunchModal, setShowLaunchModal] = useState(false);
+export const SellerDashboard: React.FC<{ onStartLive: () => void }> = ({ onStartLive }) => {
+  const { products, liveSessions } = useLive();
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [sessionTitle, setSessionTitle] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState<string>(products[0]?.id || '');
 
-  const handleOpenLaunch = (product: Product) => {
-    setSelectedProductForLive(product);
-    setStreamTitle(`Live Showcase: ${product.name}`);
-    setShowLaunchModal(true);
-  };
-
-  const handleConfirmGoLive = () => {
-    if (selectedProductForLive) {
-      onStartLive(selectedProductForLive.id, streamTitle);
-      setShowLaunchModal(false);
-    }
-  };
+  const totalSales = 1240; // Demo summary metric
+  const totalViewers = liveSessions.reduce((sum, s) => sum + s.viewer_count, 0);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      
-      {/* Seller Header Banner */}
-      <div className="bg-[#0F172A] border border-slate-800 rounded-2xl p-6 mb-8 shadow-sm relative overflow-hidden text-white">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-          <div className="flex items-center gap-4">
-            <img
-              src={user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=300'}
-              alt={user?.name}
-              className="w-14 h-14 rounded-xl object-cover ring-2 ring-blue-500/40 shadow-md"
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight">
-                  {user?.name || 'Seller Dashboard'}
-                </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                  Verified Seller
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Manage your artisan inventory, launch HD live streams, and process direct shopper orders.
-              </p>
-            </div>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
+      {/* Header Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl -z-0 pointer-events-none" />
+        <div className="space-y-2 z-10">
+          <div className="flex items-center space-x-2 text-amber-400 text-xs font-bold uppercase tracking-wider">
+            <Sparkles className="w-4 h-4" />
+            <span>Seller Studio & Live Broadcasting</span>
           </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white">Manage Products & Stream Live</h1>
+          <p className="text-sm text-slate-400 max-w-2xl">
+            Host high-definition low-latency live commerce streams powered by Agora RTC. Feature products live, engage buyers in chat, and sell instantly.
+          </p>
+        </div>
 
+        <div className="flex items-center gap-3 w-full md:w-auto z-10">
           <button
-            id="create-product-btn"
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition shadow-sm"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex-1 md:flex-initial px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold rounded-2xl flex items-center justify-center space-x-2 transition-all text-sm"
           >
-            <Plus className="w-4 h-4" />
-            Add Product to Catalog
+            <Plus className="w-4 h-4 text-amber-400" />
+            <span>Add Product</span>
           </button>
         </div>
       </div>
 
-      {/* Product Catalog Section */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <PackageCheck className="w-5 h-5 text-blue-600" />
-            <h2 className="text-base font-bold text-slate-900">Your Product Catalog</h2>
-            <span className="px-2.5 py-0.5 text-xs bg-slate-100 text-slate-600 border border-slate-200 rounded-full font-semibold">
-              {sellerProducts.length} items
-            </span>
+      {/* Quick Metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex items-center space-x-4">
+          <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400">
+            <Package className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-400">Active Products</p>
+            <p className="text-xl font-bold text-white">{products.length}</p>
           </div>
         </div>
 
-        {sellerProducts.length === 0 ? (
-          <div className="text-center py-12 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-            <Store className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-            <p className="text-sm font-semibold text-slate-800">No products added yet</p>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-              Create your first product listing to go live and start presenting to live shoppers.
-            </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg shadow-sm hover:bg-blue-500 transition"
-            >
-              Add First Product
-            </button>
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex items-center space-x-4">
+          <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400">
+            <DollarSign className="w-6 h-6" />
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sellerProducts.map((product) => (
-              <div
-                key={product.id}
-                className="group bg-white border border-slate-200 hover:border-slate-300 rounded-xl overflow-hidden transition-all duration-200 shadow-sm flex flex-col"
-              >
-                {/* Product Image & Badges */}
-                <div className="relative aspect-video overflow-hidden bg-slate-100">
-                  <img
-                    src={product.image}
-                    alt={product.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  <div className="absolute top-3 left-3">
-                    <span className="px-2.5 py-1 text-[11px] font-bold bg-white/95 text-blue-700 rounded-md border border-blue-200 shadow-sm">
-                      ${product.price.toFixed(2)} USD
-                    </span>
-                  </div>
-                  <div className="absolute top-3 right-3">
-                    <span className="px-2 py-1 text-[10px] font-bold bg-slate-900/80 text-white rounded-md backdrop-blur-sm">
-                      Stock: {product.stock}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Info & Description */}
-                <div className="p-5 flex-1 flex flex-col justify-between">
-                  <div>
-                    <h3 className="font-bold text-sm text-slate-900 line-clamp-1 mb-1">
-                      {product.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed mb-4">
-                      {product.description}
-                    </p>
-                  </div>
-
-                  {/* Actions: Go Live or Delete */}
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => deleteProduct(product.id)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition"
-                      title="Delete Product (RLS Protected)"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      id={`go-live-prod-${product.id}`}
-                      onClick={() => handleOpenLaunch(product)}
-                      className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition shadow-sm"
-                    >
-                      <Radio className="w-3.5 h-3.5 animate-pulse" />
-                      GO LIVE NOW
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div>
+            <p className="text-xs font-medium text-slate-400">Estimated Live Revenue</p>
+            <p className="text-xl font-bold text-white">${totalSales}</p>
           </div>
-        )}
+        </div>
+
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex items-center space-x-4">
+          <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400">
+            <Eye className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-400">Total Stream Viewers</p>
+            <p className="text-xl font-bold text-white">{totalViewers}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Create Product Modal */}
-      {showCreateModal && <CreateProductModal onClose={() => setShowCreateModal(false)} />}
-
-      {/* Launch Live Session Confirmation Modal (A4) */}
-      {showLaunchModal && selectedProductForLive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 text-slate-900 shadow-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center border border-red-200">
-                <Radio className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold">Start Agora Live Broadcast</h3>
-                <p className="text-xs text-slate-500">Presents product directly to shoppers</p>
-              </div>
-            </div>
-
-            <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-3">
-              <img
-                src={selectedProductForLive.image}
-                alt={selectedProductForLive.name}
-                className="w-12 h-12 rounded-lg object-cover"
-              />
-              <div>
-                <p className="text-xs font-bold text-slate-800 line-clamp-1">{selectedProductForLive.name}</p>
-                <p className="text-[11px] text-blue-600 font-semibold">${selectedProductForLive.price.toFixed(2)} USD</p>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Live Broadcast Title</label>
-              <input
-                type="text"
-                value={streamTitle}
-                onChange={(e) => setStreamTitle(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => setShowLaunchModal(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmGoLive}
-                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg shadow-sm"
-              >
-                Launch Broadcaster Studio
-              </button>
-            </div>
+      {/* Start Live Stream Config Card */}
+      <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl relative">
+        <div className="flex items-center space-x-3">
+          <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500">
+            <Radio className="w-6 h-6 animate-pulse" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-white">Go Live Now</h2>
+            <p className="text-xs text-slate-400">Broadcast live camera & mic stream to viewers across Africa</p>
           </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1.5">Stream Session Title</label>
+            <input
+              type="text"
+              value={sessionTitle}
+              onChange={(e) => setSessionTitle(e.target.value)}
+              placeholder="e.g. ✨ Summer Handwoven Collection Showcase & Live Q&A"
+              className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1.5">Featured Product to Showcase</label>
+            <select
+              value={selectedProductId}
+              onChange={(e) => setSelectedProductId(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-amber-500"
+            >
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title} (${p.price})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={onStartLive}
+            className="px-6 py-3 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-bold rounded-xl shadow-lg shadow-rose-500/20 flex items-center space-x-2 transition-all text-sm"
+          >
+            <Radio className="w-4 h-4 animate-ping" />
+            <span>Launch Live Stream Studio</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Product Catalog */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white">Product Catalog ({products.length})</h2>
+          <button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="text-xs text-amber-400 hover:underline font-semibold"
+          >
+            + Add New
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {products.map((p) => (
+            <div
+              key={p.id}
+              className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden shadow-md transition-all group"
+            >
+              <div className="aspect-video relative overflow-hidden bg-slate-950">
+                <img
+                  src={p.image_url}
+                  alt={p.title}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+                <span className="absolute top-3 right-3 px-2.5 py-1 bg-slate-950/80 backdrop-blur-md text-amber-400 text-xs font-bold rounded-lg border border-slate-800">
+                  ${p.price} {p.currency}
+                </span>
+              </div>
+
+              <div className="p-4 space-y-2">
+                <h3 className="text-sm font-semibold text-white line-clamp-1">{p.title}</h3>
+                <p className="text-xs text-slate-400 line-clamp-2">{p.description}</p>
+                <div className="pt-2 flex items-center justify-between text-xs text-slate-500 border-t border-slate-800/80">
+                  <span>Stock: {p.stock} units</span>
+                  <span className="text-emerald-400 font-medium capitalize">{p.status}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Modal to add new product */}
+      {isCreateModalOpen && <CreateProductModal onClose={() => setIsCreateModalOpen(false)} />}
     </div>
   );
 };

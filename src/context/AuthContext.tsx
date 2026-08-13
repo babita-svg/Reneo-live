@@ -1,148 +1,111 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { UserProfile, UserRole } from '../types';
-import { INITIAL_DEMO_PROFILES, isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 interface AuthContextType {
   user: UserProfile | null;
-  role: UserRole;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  loginAsDemoSeller: () => void;
-  loginAsDemoCustomer: () => void;
-  loginWithEmail: (email: string, role: UserRole) => Promise<void>;
-  signUpWithEmail: (name: string, email: string, role: UserRole) => Promise<void>;
-  signOut: () => Promise<void>;
-  switchRole: (newRole: UserRole) => void;
+  loading: boolean;
+  loginDemoUser: (role: UserRole, name?: string) => void;
+  logout: () => Promise<void>;
+  updateUserRole: (role: UserRole) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_USER_KEY = 'reneo_active_user';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+    const saved = localStorage.getItem('reneo_user');
     if (saved) {
       try {
         return JSON.parse(saved);
-      } catch (e) {
-        // Fallback to default seller
+      } catch {
+        // ignore
       }
     }
-    return INITIAL_DEMO_PROFILES[0] as UserProfile; // Default to Seller for rich immediate interface
+    // Default demo user as Seller for instant evaluation
+    return {
+      id: 'demo-seller-101',
+      name: 'Amara Koffi',
+      email: 'amara@reneo.africa',
+      role: 'seller',
+      avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+      created_at: new Date().toISOString(),
+    };
   });
 
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(user));
+      localStorage.setItem('reneo_user', JSON.stringify(user));
     } else {
-      localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
+      localStorage.removeItem('reneo_user');
     }
   }, [user]);
 
-  const loginAsDemoSeller = () => {
-    const seller = INITIAL_DEMO_PROFILES.find((p) => p.role === 'seller') || INITIAL_DEMO_PROFILES[0];
-    setUser(seller as UserProfile);
-  };
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
 
-  const loginAsDemoCustomer = () => {
-    const customer = INITIAL_DEMO_PROFILES.find((p) => p.role === 'customer') || INITIAL_DEMO_PROFILES[1];
-    setUser(customer as UserProfile);
-  };
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        // Fetch or create profile in Supabase
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
 
-  const loginWithEmail = async (email: string, targetRole: UserRole) => {
-    setIsLoading(true);
-    try {
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password: 'password123',
-        });
-        if (error) console.warn('Supabase auth sign in notice:', error.message);
+        if (profile) {
+          setUser(profile);
+        } else {
+          const newProfile: UserProfile = {
+            id: session.user.id,
+            name: session.user.user_metadata?.name || 'Live Creator',
+            email: session.user.email || '',
+            role: (session.user.user_metadata?.role as UserRole) || 'customer',
+            created_at: new Date().toISOString(),
+          };
+          setUser(newProfile);
+        }
       }
+    });
 
-      const existingProfile = INITIAL_DEMO_PROFILES.find((p) => p.email === email);
-      if (existingProfile) {
-        setUser({ ...existingProfile, role: targetRole } as UserProfile);
-      } else {
-        const newProfile: UserProfile = {
-          id: `usr_${Date.now()}`,
-          name: email.split('@')[0],
-          avatar: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=300`,
-          role: targetRole,
-          email,
-          created_at: new Date().toISOString(),
-        };
-        setUser(newProfile);
-      }
-    } finally {
-      setIsLoading(false);
-    }
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const loginDemoUser = (role: UserRole, name?: string) => {
+    const newUser: UserProfile = {
+      id: role === 'seller' ? 'demo-seller-101' : 'demo-customer-202',
+      name: name || (role === 'seller' ? 'Amara Koffi (Seller)' : 'Kofi Mensah (Buyer)'),
+      email: role === 'seller' ? 'amara@reneo.africa' : 'kofi@reneo.africa',
+      role,
+      avatar_url: role === 'seller' 
+        ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
+        : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200',
+      created_at: new Date().toISOString(),
+    };
+    setUser(newUser);
   };
 
-  const signUpWithEmail = async (name: string, email: string, newRole: UserRole) => {
-    setIsLoading(true);
-    try {
-      const newProfile: UserProfile = {
-        id: `usr_${Date.now()}`,
-        name,
-        avatar: newRole === 'seller' 
-          ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=300'
-          : 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=300',
-        role: newRole,
-        email,
-        created_at: new Date().toISOString(),
-      };
-
-      if (isSupabaseConfigured && supabase) {
-        await supabase.auth.signUp({
-          email,
-          password: 'password123',
-          options: {
-            data: { name, role: newRole, avatar: newProfile.avatar },
-          },
-        });
-      }
-
-      setUser(newProfile);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const signOut = async () => {
-    if (isSupabaseConfigured && supabase) {
+  const logout = async () => {
+    if (isSupabaseConfigured) {
       await supabase.auth.signOut();
     }
     setUser(null);
+    localStorage.removeItem('reneo_user');
   };
 
-  const switchRole = (newRole: UserRole) => {
+  const updateUserRole = (role: UserRole) => {
     if (user) {
-      setUser({ ...user, role: newRole });
-    } else {
-      if (newRole === 'seller') loginAsDemoSeller();
-      else loginAsDemoCustomer();
+      const updated = { ...user, role };
+      setUser(updated);
     }
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        role: user?.role || 'customer',
-        isAuthenticated: Boolean(user),
-        isLoading,
-        loginAsDemoSeller,
-        loginAsDemoCustomer,
-        loginWithEmail,
-        signUpWithEmail,
-        signOut,
-        switchRole,
-      }}
-    >
+    <AuthContext.Provider value={{ user, loading, loginDemoUser, logout, updateUserRole }}>
       {children}
     </AuthContext.Provider>
   );
@@ -150,6 +113,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
   return context;
 };
